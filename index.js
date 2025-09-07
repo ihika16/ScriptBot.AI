@@ -1,78 +1,52 @@
 import TelegramBot from "node-telegram-bot-api";
 import fetch from "node-fetch";
-import dotenv from "dotenv";
 
-dotenv.config();
-
+// 🔐 Get secrets safely from environment variables
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
+// Check if keys exist (helps debug on Render)
 if (!TELEGRAM_TOKEN || !TMDB_API_KEY) {
-  console.error("🚨 Missing TELEGRAM_TOKEN or TMDB_API_KEY in .env file");
-  process.exit(1);
+  console.error("❌ Missing TELEGRAM_TOKEN or TMDB_API_KEY in environment variables.");
+  process.exit(1); // stop the app if secrets are missing
 }
 
+// Create Telegram bot
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-console.log("🤖 Bot is running... waiting for messages!");
 
-// Handle movie search
+// Command: /start
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(msg.chat.id, "🎬 Welcome to MovieBot! Send me a movie name and I'll fetch details.");
+});
+
+// Handle messages (movie search)
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
-  const query = msg.text.trim();
+  const query = msg.text;
 
-  console.log(`📩 Received: "${query}" from chat ${chatId}`);
+  // Ignore the /start command
+  if (query.toLowerCase() === "/start") return;
 
   try {
-    // 1. Search movie by name
-    const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(
-      query
-    )}`;
-    const searchRes = await fetch(searchUrl);
-    const searchData = await searchRes.json();
+    // Call TMDB API
+    const response = await fetch(
+      `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`
+    );
+    const data = await response.json();
 
-    if (!searchData.results || searchData.results.length === 0) {
-      await bot.sendMessage(chatId, `❌ No results found for "${query}"`);
-      return;
-    }
-
-    const movie = searchData.results[0]; // take first result
-    const movieId = movie.id;
-
-    // 2. Get full movie details
-    const detailsUrl = `https://api.themoviedb.org/3/movie/${movieId}?api_key=${TMDB_API_KEY}&append_to_response=credits,recommendations`;
-    const detailsRes = await fetch(detailsUrl);
-    const details = await detailsRes.json();
-
-    // Cast (top 5)
-    const cast = details.credits?.cast
-      ?.slice(0, 5)
-      .map((actor) => actor.name)
-      .join(", ") || "Not available";
-
-    // Recommendations (similar movies)
-    const recommendations =
-      details.recommendations?.results
-        ?.slice(0, 3)
-        .map((rec) => rec.title)
-        .join(", ") || "None";
-
-    // Reply message
-    const reply = `🎬 *${details.title}* (${details.release_date?.slice(0, 4) || "N/A"})
-⭐ Rating: ${details.vote_average || "N/A"} / 10
-📝 Plot: ${details.overview || "No plot available"}
-👥 Cast: ${cast}
-🍿 Similar Movies: ${recommendations}
-📅 Release Date: ${details.release_date || "N/A"}
-`;
-
-    await bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
-
-    // Poster
-    if (details.poster_path) {
-      await bot.sendPhoto(chatId, `https://image.tmdb.org/t/p/w500${details.poster_path}`);
+    if (data.results && data.results.length > 0) {
+      const movie = data.results[0];
+      const reply = `
+🎥 *${movie.title}* (${movie.release_date?.split("-")[0] || "N/A"})
+⭐ Rating: ${movie.vote_average}/10
+📝 Overview: ${movie.overview || "No description available."}
+      `;
+      bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
+    } else {
+      bot.sendMessage(chatId, "❌ No results found.");
     }
   } catch (error) {
-    console.error("🚨 Error:", error);
-    await bot.sendMessage(chatId, "⚠️ Oops! Something went wrong.");
+    console.error("Error fetching movie:", error);
+    bot.sendMessage(chatId, "⚠️ Something went wrong. Try again later.");
   }
 });
